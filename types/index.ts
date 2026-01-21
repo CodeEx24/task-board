@@ -19,6 +19,7 @@ export interface Task {
   priority: TaskPriority | null
   assignedTo: string | null
   dueDate: Date | null
+  order: number
   createdAt: Date
   updatedAt: Date
   boardId: string

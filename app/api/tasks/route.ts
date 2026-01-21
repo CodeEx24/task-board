@@ -90,10 +90,10 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get tasks for the board, sorted by createdAt desc
+    // Get tasks for the board, sorted by order then createdAt
     const tasks = await prisma.task.findMany({
       where: { boardId },
-      orderBy: { createdAt: 'desc' }
+      orderBy: [{ order: 'asc' }, { createdAt: 'desc' }]
     })
 
     return NextResponse.json(tasks, { status: 200 })

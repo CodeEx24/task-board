@@ -27,6 +27,7 @@ model Task {
   priority    String?   // "low" | "medium" | "high"
   assignedTo  String?
   dueDate     DateTime?
+  order       Int       @default(0)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   board       Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)

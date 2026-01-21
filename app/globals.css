@@ -24,3 +24,26 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Drag and Drop Feedback Styles */
+.task-dragging {
+  opacity: 0.9;
+  transform: rotate(2deg);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+  cursor: grabbing;
+}
+
+.column-drag-over {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border: 2px dashed #3b82f6 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .task-dragging {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  }
+
+  .column-drag-over {
+    background: rgba(59, 130, 246, 0.15) !important;
+  }
+}

@@ -3,8 +3,22 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import {
+  DndContext,
+  closestCorners,
+  DragOverlay,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragOverEvent,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { arrayMove } from '@dnd-kit/sortable'
 import type { Board, Task, TaskStatus, TaskPriority } from '@/types'
 import TaskColumn from '@/components/TaskColumn'
+import TaskCard from '@/components/TaskCard'
 import CreateTaskForm from '@/components/CreateTaskForm'
 
 interface EditTaskData {
@@ -45,6 +59,24 @@ export default function BoardDetailPage() {
 
   // Toast notifications
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  // Drag and drop state
+  const [activeTask, setActiveTask] = useState<Task | null>(null)
+
+  // Configure sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 200,
+        tolerance: 5,
+      },
+    })
+  )
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type })
@@ -101,6 +133,7 @@ export default function BoardDetailPage() {
       priority: data.priority || null,
       assignedTo: data.assignedTo || null,
       dueDate: data.dueDate ? new Date(data.dueDate) : null,
+      order: tasks.filter(t => t.status === 'todo').length,
       createdAt: new Date(),
       updatedAt: new Date(),
       boardId: boardId,
@@ -142,7 +175,7 @@ export default function BoardDetailPage() {
     }
   }
 
-  // Status change handler
+  // Status change handler (used by dropdown)
   const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => {
     const task = tasks.find((t) => t.id === taskId)
     if (!task) return
@@ -176,6 +209,117 @@ export default function BoardDetailPage() {
         prev.map((t) => (t.id === taskId ? { ...t, status: previousStatus } : t))
       )
       showToast(err instanceof Error ? err.message : 'Failed to update status', 'error')
+    }
+  }
+
+  // Drag and drop handlers
+  const handleDragStart = (event: DragStartEvent) => {
+    const { active } = event
+    const task = tasks.find((t) => t.id === active.id)
+    if (task) {
+      setActiveTask(task)
+    }
+  }
+
+  const handleDragOver = (_event: DragOverEvent) => {
+    // Visual feedback is handled by useDroppable's isOver state
+    // Actual status changes happen in handleDragEnd
+  }
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    const draggedTask = activeTask
+    setActiveTask(null)
+
+    if (!over || !draggedTask) return
+
+    const activeId = active.id as string
+    const overId = over.id as string
+
+    // Determine target status
+    const isOverColumn = ['todo', 'in_progress', 'done'].includes(overId)
+    const overTask = tasks.find((t) => t.id === overId)
+    const targetStatus = isOverColumn
+      ? (overId as TaskStatus)
+      : overTask?.status || draggedTask.status
+
+    const originalStatus = draggedTask.status
+    const statusChanged = originalStatus !== targetStatus
+
+    // Get tasks in the target column (after potential move)
+    let columnTasks = tasks
+      .filter((t) => t.status === targetStatus || (t.id === activeId && statusChanged))
+      .map((t) => (t.id === activeId ? { ...t, status: targetStatus } : t))
+      .sort((a, b) => a.order - b.order)
+
+    // If dropping on another task in the same column, reorder
+    if (!isOverColumn && overTask && activeId !== overId && overTask.status === targetStatus) {
+      const oldIndex = columnTasks.findIndex((t) => t.id === activeId)
+      const newIndex = columnTasks.findIndex((t) => t.id === overId)
+
+      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+        columnTasks = arrayMove(columnTasks, oldIndex, newIndex)
+
+        // Update local state with new order
+        setTasks((prev) => {
+          const otherTasks = prev.filter((t) => t.status !== targetStatus && t.id !== activeId)
+          const reorderedTasks = columnTasks.map((task, index) => ({
+            ...task,
+            order: index,
+            status: targetStatus,
+          }))
+          return [...otherTasks, ...reorderedTasks]
+        })
+
+        // Update order on server
+        for (let i = 0; i < columnTasks.length; i++) {
+          const task = columnTasks[i]
+          if (task.order !== i || task.id === activeId) {
+            fetch(`/api/tasks/${task.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ order: i, status: targetStatus }),
+            }).catch(console.error)
+          }
+        }
+
+        if (statusChanged) {
+          showToast(`Task moved to ${targetStatus.replace('_', ' ')}`, 'success')
+        }
+        return
+      }
+    }
+
+    // If only status changed (moved to different column)
+    if (statusChanged) {
+      // Optimistic update
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === activeId ? { ...t, status: targetStatus } : t
+        )
+      )
+
+      try {
+        const response = await fetch(`/api/tasks/${activeId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: targetStatus }),
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to update task status')
+        }
+
+        showToast(`Task moved to ${targetStatus.replace('_', ' ')}`, 'success')
+      } catch (err) {
+        // Revert on error
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === activeId ? { ...t, status: originalStatus } : t
+          )
+        )
+        showToast('Failed to move task', 'error')
+      }
     }
   }
 
@@ -290,10 +434,10 @@ export default function BoardDetailPage() {
     }
   }
 
-  // Filter tasks by status
-  const todoTasks = tasks.filter((t) => t.status === 'todo')
-  const inProgressTasks = tasks.filter((t) => t.status === 'in_progress')
-  const doneTasks = tasks.filter((t) => t.status === 'done')
+  // Filter tasks by status and sort by order
+  const todoTasks = tasks.filter((t) => t.status === 'todo').sort((a, b) => a.order - b.order)
+  const inProgressTasks = tasks.filter((t) => t.status === 'in_progress').sort((a, b) => a.order - b.order)
+  const doneTasks = tasks.filter((t) => t.status === 'done').sort((a, b) => a.order - b.order)
 
   // Loading state
   if (isLoading) {
@@ -759,30 +903,52 @@ export default function BoardDetailPage() {
           <CreateTaskForm onSubmit={handleCreateTask} />
         </div>
 
-        {/* Task Columns */}
-        <div className="flex flex-col gap-6 md:flex-row md:items-start">
-          <TaskColumn
-            status="todo"
-            tasks={todoTasks}
-            onStatusChange={handleStatusChange}
-            onEdit={handleEditClick}
-            onDelete={handleDeleteClick}
-          />
-          <TaskColumn
-            status="in_progress"
-            tasks={inProgressTasks}
-            onStatusChange={handleStatusChange}
-            onEdit={handleEditClick}
-            onDelete={handleDeleteClick}
-          />
-          <TaskColumn
-            status="done"
-            tasks={doneTasks}
-            onStatusChange={handleStatusChange}
-            onEdit={handleEditClick}
-            onDelete={handleDeleteClick}
-          />
-        </div>
+        {/* Task Columns with Drag and Drop */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="flex flex-col gap-6 md:flex-row md:items-start">
+            <TaskColumn
+              status="todo"
+              tasks={todoTasks}
+              onStatusChange={handleStatusChange}
+              onEdit={handleEditClick}
+              onDelete={handleDeleteClick}
+            />
+            <TaskColumn
+              status="in_progress"
+              tasks={inProgressTasks}
+              onStatusChange={handleStatusChange}
+              onEdit={handleEditClick}
+              onDelete={handleDeleteClick}
+            />
+            <TaskColumn
+              status="done"
+              tasks={doneTasks}
+              onStatusChange={handleStatusChange}
+              onEdit={handleEditClick}
+              onDelete={handleDeleteClick}
+            />
+          </div>
+
+          {/* Drag Overlay - shows the dragged card */}
+          <DragOverlay>
+            {activeTask ? (
+              <div className="task-dragging">
+                <TaskCard
+                  task={activeTask}
+                  onStatusChange={() => {}}
+                  onEdit={() => {}}
+                  onDelete={() => {}}
+                />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       </div>
     </div>
   )

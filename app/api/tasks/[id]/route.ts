@@ -43,7 +43,7 @@ export async function PATCH(
   try {
     const { id } = await context.params
     const body = await request.json()
-    const { title, description, status, priority, assignedTo, dueDate } = body
+    const { title, description, status, priority, assignedTo, dueDate, order } = body
 
     // Check if task exists
     const existingTask = await prisma.task.findUnique({
@@ -83,6 +83,7 @@ export async function PATCH(
       priority?: string | null
       assignedTo?: string | null
       dueDate?: Date | null
+      order?: number
     } = {}
 
     if (title !== undefined) updateData.title = title
@@ -93,6 +94,7 @@ export async function PATCH(
     if (dueDate !== undefined) {
       updateData.dueDate = dueDate ? new Date(dueDate) : null
     }
+    if (order !== undefined) updateData.order = order
 
     // Update the task
     const task = await prisma.task.update({
